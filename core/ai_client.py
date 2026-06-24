@@ -1,35 +1,56 @@
 import os
 import sys
 import json
+from pathlib import Path
+from dotenv import load_dotenv
 from openai import OpenAI
 
 
-class Ai_Client():
+# --- 加载 .env 配置 ---
+def _get_base_path():
+    """获取项目根目录（兼容开发环境和 PyInstaller 打包后的 exe）"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(".")
+
+BASE_PATH = _get_base_path()
+
+# .env 查找优先级：exe 同目录 > PyInstaller 临时目录 > 默认搜索
+env_path = Path(BASE_PATH) / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    # PyInstaller 打包后数据文件在 sys._MEIPASS
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        bundled_env = Path(meipass) / ".env"
+        if bundled_env.exists():
+            load_dotenv(dotenv_path=bundled_env)
+        else:
+            load_dotenv()
+    else:
+        load_dotenv()
+
+
+class Ai_Client:
     JSON_FILE_NAME = "session.json"
 
     def __init__(self):
-        if getattr(sys, 'frozen', False):
-            # 如果是打包后的 exe 运行，base_path 就是 exe 所在的文件夹
-            base_path = os.path.dirname(sys.executable)
-        else:
-            # 如果是开发环境运行，base_path 就是项目根目录
-            base_path = os.path.abspath(".")
+        base_path = BASE_PATH
 
         # 定义 core 文件夹路径
         self.core_dir = os.path.join(base_path, "core")
-        
+
         #exe目录/core/session.json
         self.full_path = os.path.join(self.core_dir, "session.json")
 
-        # --- 3. 强制创建文件夹 (关键！) ---
-        # 如果 core 文件夹不存在，就创建它
+        # --- 强制创建文件夹 ---
         if not os.path.exists(self.core_dir):
             os.makedirs(self.core_dir)
             print(f"已自动创建文件夹: {self.core_dir}")
-        
-        # --- 4. 确保文件存在 (可选，防止第一次写入报错) ---
+
+        # --- 确保文件存在 ---
         if not os.path.exists(self.full_path):
-            # 如果文件不存在，先创建一个空的
             default_data = {"status": "new", "user": "guest", "function_id": None, "params": {}}
             with open(self.full_path, 'w', encoding='utf-8') as f:
                 json.dump(default_data, f, indent=4)
@@ -39,11 +60,19 @@ class Ai_Client():
 
     #封装调用deepseek的函数
     def call_deepseek(self, input_lineEdit):
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key or api_key == "your_api_key_here":
+            raise ValueError(
+                "未配置 DEEPSEEK_API_KEY，请在项目根目录的 .env 文件中填写你的 API Key。\n"
+                "可从 https://platform.deepseek.com 获取。"
+            )
+
         client = OpenAI(
-            api_key=os.environ.get('DEEPSEEK_API_KEY'),
-            base_url="https://api.deepseek.com")
-        
-        ai_model = 'deepseek-v4-flash'
+            api_key=api_key,
+            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        )
+
+        ai_model = os.getenv("AI_MODEL", "deepseek-v4-flash")
 
         #系统的提示词和用户的输入
         #提示词为ai生成
@@ -133,7 +162,7 @@ class Ai_Client():
                 {"role": "user", "content": user_prompt},
             ],
             stream=False,
-            reasoning_effort="high",
+            reasoning_effort=os.getenv("REASONING_EFFORT", "high"),
             extra_body={"thinking": {"type": "enabled"}}
         )
 
